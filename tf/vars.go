@@ -109,18 +109,18 @@ var typeEvalCtx = &hcl.EvalContext{
 	},
 }
 
-func parseVarsArg(src string, argIdx int) (map[string]cty.Value, hcl.Diagnostics) {
+func ParseVarsArg(src string, argIdx int) (map[string]cty.Value, hcl.Diagnostics) {
 	fakeFn := fmt.Sprintf("<vars argument %d>", argIdx)
 	f, diags := parser.ParseJSON([]byte(src), fakeFn)
 	if f == nil {
 		return nil, diags
 	}
-	vals, valsDiags := parseVarsBody(f.Body)
+	vals, valsDiags := ParseVarsBody(f.Body)
 	diags = append(diags, valsDiags...)
 	return vals, diags
 }
 
-func parseVarsFile(filename string) (map[string]cty.Value, hcl.Diagnostics) {
+func ParseVarsFile(filename string) (map[string]cty.Value, hcl.Diagnostics) {
 	var f *hcl.File
 	var diags hcl.Diagnostics
 
@@ -134,13 +134,13 @@ func parseVarsFile(filename string) (map[string]cty.Value, hcl.Diagnostics) {
 		return nil, diags
 	}
 
-	vals, valsDiags := parseVarsBody(f.Body)
+	vals, valsDiags := ParseVarsBody(f.Body)
 	diags = append(diags, valsDiags...)
 	return vals, diags
 
 }
 
-func parseVarsBody(body hcl.Body) (map[string]cty.Value, hcl.Diagnostics) {
+func ParseVarsBody(body hcl.Body) (map[string]cty.Value, hcl.Diagnostics) {
 	attrs, diags := body.JustAttributes()
 	if attrs == nil {
 		return nil, diags

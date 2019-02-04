@@ -3,39 +3,25 @@ package tags
 import (
 	"errors"
 	"fmt"
+	"github.com/spf13/viper"
 	"strconv"
 )
 
-type MultiTag struct {
-	value string
-	cache map[string][]string
-}
-
-func NewMultiTag(v string) MultiTag {
-	return MultiTag{
-		value: v,
-	}
-}
-
-func (x *MultiTag) Scan() (map[string][]string, error) {
-
-	v := x.value
-
-	ret := make(map[string][]string)
-
+func scanMultiTag(field string) (map[string][]string, error) {
+	mtag := make(map[string][]string)
 	// This is mostly copied from reflect.StructTag.Get
-	for v != "" {
+	for field != "" {
 		i := 0
 
 		// Skip whitespace
-		for i < len(v) && v[i] == ' ' {
+		for i < len(field) && field[i] == ' ' {
 			i++
 		}
 		// value is equal to an array with the length of the number of kv pairs found in the struct tag
-		v = v[i:]
+		field = field[i:]
 
 		// if value is empty, break
-		if v == "" {
+		if field == "" {
 			break
 		}
 
@@ -46,103 +32,100 @@ func (x *MultiTag) Scan() (map[string][]string, error) {
 		// && the kv is not whitespace
 		// && kv is not a colon && kv is not a quotation mark
 		// add a
-		for i < len(v) && v[i] != ' ' && v[i] != ':' && v[i] != '"' {
+		for i < len(field) && field[i] != ' ' && field[i] != ':' && field[i] != '"' {
 			i++
 		}
 
-		if i >= len(v) {
-			return nil, errors.New(fmt.Sprintf("expected `:' after key name, but got end of tag (in `%v`)", x.value))
+		if i >= len(field) {
+			return nil, errors.New(fmt.Sprintf("expected `:' after key name, but got end of tag (in `%field`)", x.value))
 		}
 
-		if v[i] != ':' {
-			return nil, errors.New(fmt.Sprintf("expected `:' after key name, but got `%v' (in `%v`)", v[i], x.value))
+		if field[i] != ':' {
+			return nil, errors.New(fmt.Sprintf("expected `:' after key name, but got `%field' (in `%field`)", field[i], x.value))
 		}
 
-		if i+1 >= len(v) {
-			return nil, errors.New(fmt.Sprintf("expected `\"' to start tag value at end of tag (in `%v`)", x.value))
+		if i+1 >= len(field) {
+			return nil, errors.New(fmt.Sprintf("expected `\"' to start tag value at end of tag (in `%field`)", x.value))
 		}
 
-		if v[i+1] != '"' {
-			return nil, errors.New(fmt.Sprintf("expected `\"' to start tag value, but got `%v' (in `%v`)", v[i+1], x.value))
+		if field[i+1] != '"' {
+			return nil, errors.New(fmt.Sprintf("expected `\"' to start tag value, but got `%field' (in `%field`)", field[i+1], x.value))
 		}
 
-		name := v[:i]
-		v = v[i+1:]
+		name := field[:i]
+		field = field[i+1:]
 
 		// Scan quoted string to find value
 		i = 1
 
-		for i < len(v) && v[i] != '"' {
-			if v[i] == '\n' {
-				return nil, errors.New(fmt.Sprintf("expected end of tag value `\"' at end of tag (in `%v`)", x.value))
+		for i < len(field) && field[i] != '"' {
+			if field[i] == '\n' {
+				return nil, errors.New(fmt.Sprintf("expected end of tag value `\"' at end of tag (in `%field`)", x.value))
 			}
 
-			if v[i] == '\\' {
+			if field[i] == '\\' {
 				i++
 			}
 			i++
 		}
 
-		if i >= len(v) {
-			return nil, errors.New(fmt.Sprintf("expected end of tag value `\"' at end of tag (in `%v`)", x.value))
+		if i >= len(field) {
+			return nil, errors.New(fmt.Sprintf("expected end of tag value `\"' at end of tag (in `%field`)", x.value))
 		}
 
-		val, err := strconv.Unquote(v[:i+1])
+		val, err := strconv.Unquote(field[:i+1])
 
 		if err != nil {
-			return nil, errors.New(fmt.Sprintf("Malformed value of tag `%v:%v` => %v (in `%v`)", name, v[:i+1], err, x.value))
+			return nil, errors.New(fmt.Sprintf("Malformed value of tag `%field:%field` => %field (in `%field`)", name, field[:i+1], err, x.value))
 		}
 
-		v = v[i+1:]
+		field = field[i+1:]
 
-		ret[name] = append(ret[name], val)
+		mtag[name] = append(mtag[name], val)
 	}
 
-	return ret, nil
+	return mtag, nil
 }
 
-func (x *MultiTag) Parse() error {
-	vals, err := x.Scan()
-	x.cache = vals
+func ParseMultiTag(field string) error {
+	vals, err := scanMultiTag(field)
+	viper.Set(field, vals)
 
 	return err
 }
 
-func (x *MultiTag) Cached() map[string][]string {
-	if x.cache == nil {
-		cache, _ := x.Scan()
-
+func Cached(field string) map[string][]string {
+	if viper.GetStringMapStringSlice(field) == nil {
+		cache, _ := scanMultiTag(field)
 		if cache == nil {
 			cache = make(map[string][]string)
 		}
-
-		x.cache = cache
+		viper.Set(field, cache)
 	}
-
-	return x.cache
+	return viper.GetStringMapStringSlice(field)
 }
 
-func (x *MultiTag) Get(key string) string {
-	c := x.Cached()
+func Get(field string) string {
+	c := viper.GetStringMapStringSlice(field)
 
-	if v, ok := c[key]; ok {
-		return v[len(v)-1]
+	if field, ok := c[field]; ok {
+		return field[len(field)-1]
 	}
 
 	return ""
 }
 
-func (x *MultiTag) GetMany(key string) []string {
-	c := x.Cached()
-	return c[key]
+func GetMany(field string) []string {
+	c := viper.GetStringMapStringSlice(field)
+	return c[field]
 }
 
-func (x *MultiTag) Set(key string, value string) {
-	c := x.Cached()
-	c[key] = []string{value}
+func Set(field string, value string) {
+	c := viper.GetStringMapStringSlice(field)
+	c[field] = []string{value}
 }
 
-func (x *MultiTag) SetMany(key string, value []string) {
-	c := x.Cached()
-	c[key] = value
+func SetMany(field string, value []string) {
+	c := viper.GetStringMapStringSlice(field)
+	c[field] = value
 }
