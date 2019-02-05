@@ -1,4 +1,4 @@
-package strings
+package goreflect
 
 import (
 	"encoding/base32"

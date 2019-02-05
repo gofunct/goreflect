@@ -1,7 +1,12 @@
-package tf
+package goreflect
 
 import (
+	"encoding/json"
 	"fmt"
+	"github.com/zclconf/go-cty/cty/function/stdlib"
+	"io"
+	"reflect"
+	"strings"
 
 	"github.com/hashicorp/hcl2/ext/userfunc"
 	"github.com/hashicorp/hcl2/gohcl"
@@ -12,20 +17,89 @@ import (
 	"github.com/zclconf/go-cty/cty/function"
 )
 
-var parser = hclparse.NewParser()
-var diagWr hcl.DiagnosticWriter // initialized in init
-
-type specFileContent struct {
-	Variables map[string]cty.Value
-	Functions map[string]function.Function
-	RootSpec  hcldec.Spec
+type JsonDiagWriter struct {
+	w     io.Writer
+	diags hcl.Diagnostics
 }
 
-var specCtx = &hcl.EvalContext{
-	Functions: specFuncs,
+var _ hcl.DiagnosticWriter = &JsonDiagWriter{}
+
+func (wr *JsonDiagWriter) WriteDiagnostic(diag *hcl.Diagnostic) error {
+	wr.diags = append(wr.diags, diag)
+	return nil
 }
 
-func loadSpecFile(filename string) (specFileContent, hcl.Diagnostics) {
+func (wr *JsonDiagWriter) WriteDiagnostics(diags hcl.Diagnostics) error {
+	wr.diags = append(wr.diags, diags...)
+	return nil
+}
+
+func (wr *JsonDiagWriter) Flush() error {
+	if len(wr.diags) == 0 {
+		return nil
+	}
+
+	type PosJSON struct {
+		Line   int `json:"line"`
+		Column int `json:"column"`
+		Byte   int `json:"byte"`
+	}
+	type RangeJSON struct {
+		Filename string  `json:"filename"`
+		Start    PosJSON `json:"start"`
+		End      PosJSON `json:"end"`
+	}
+	type DiagnosticJSON struct {
+		Severity string     `json:"severity"`
+		Summary  string     `json:"summary"`
+		Detail   string     `json:"detail,omitempty"`
+		Subject  *RangeJSON `json:"subject,omitempty"`
+	}
+	type DiagnosticsJSON struct {
+		Diagnostics []DiagnosticJSON `json:"diagnostics"`
+	}
+
+	diagsJSON := make([]DiagnosticJSON, 0, len(wr.diags))
+	for _, diag := range wr.diags {
+		var diagJSON DiagnosticJSON
+
+		switch diag.Severity {
+		case hcl.DiagError:
+			diagJSON.Severity = "error"
+		case hcl.DiagWarning:
+			diagJSON.Severity = "warning"
+		default:
+			diagJSON.Severity = "(unknown)" // should never happen
+		}
+
+		diagJSON.Summary = diag.Summary
+		diagJSON.Detail = diag.Detail
+		if diag.Subject != nil {
+			diagJSON.Subject = &RangeJSON{}
+			sJSON := diagJSON.Subject
+			rng := diag.Subject
+			sJSON.Filename = rng.Filename
+			sJSON.Start.Line = rng.Start.Line
+			sJSON.Start.Column = rng.Start.Column
+			sJSON.Start.Byte = rng.Start.Byte
+			sJSON.End.Line = rng.End.Line
+			sJSON.End.Column = rng.End.Column
+			sJSON.End.Byte = rng.End.Byte
+		}
+
+		diagsJSON = append(diagsJSON, diagJSON)
+	}
+
+	src, err := json.MarshalIndent(DiagnosticsJSON{diagsJSON}, "", "  ")
+	if err != nil {
+		return err
+	}
+	_, err = wr.w.Write(src)
+	wr.w.Write([]byte{'\n'})
+	return err
+}
+
+func LoadSpecFile(filename string) (specFileContent, hcl.Diagnostics) {
 	file, diags := parser.ParseHCLFile(filename)
 	if diags.HasErrors() {
 		return specFileContent{RootSpec: errSpec}, diags
@@ -42,6 +116,37 @@ func loadSpecFile(filename string) (specFileContent, hcl.Diagnostics) {
 		Functions: funcs,
 		RootSpec:  spec,
 	}, diags
+}
+
+var specFuncs = map[string]function.Function{
+	"abs":        stdlib.AbsoluteFunc,
+	"coalesce":   stdlib.CoalesceFunc,
+	"concat":     stdlib.ConcatFunc,
+	"hasindex":   stdlib.HasIndexFunc,
+	"int":        stdlib.IntFunc,
+	"jsondecode": stdlib.JSONDecodeFunc,
+	"jsonencode": stdlib.JSONEncodeFunc,
+	"length":     stdlib.LengthFunc,
+	"lower":      stdlib.LowerFunc,
+	"max":        stdlib.MaxFunc,
+	"min":        stdlib.MinFunc,
+	"reverse":    stdlib.ReverseFunc,
+	"strlen":     stdlib.StrlenFunc,
+	"substr":     stdlib.SubstrFunc,
+	"upper":      stdlib.UpperFunc,
+}
+
+var parser = hclparse.NewParser()
+var diagWr hcl.DiagnosticWriter // initialized in init
+
+type specFileContent struct {
+	Variables map[string]cty.Value
+	Functions map[string]function.Function
+	RootSpec  hcldec.Spec
+}
+
+var specCtx = &hcl.EvalContext{
+	Functions: specFuncs,
 }
 
 func decodeSpecDecls(body hcl.Body) (map[string]cty.Value, map[string]function.Function, hcl.Body, hcl.Diagnostics) {
@@ -641,4 +746,185 @@ func init() {
 			},
 		)
 	}
+}
+
+type flusher interface {
+	Flush() error
+}
+
+func flush(maybeFlusher interface{}) error {
+	if f, ok := maybeFlusher.(flusher); ok {
+		return f.Flush()
+	}
+	return nil
+}
+
+func evalTypeExpr(expr hcl.Expression) (cty.Type, hcl.Diagnostics) {
+	result, diags := expr.Value(typeEvalCtx)
+	if result.IsNull() {
+		return cty.DynamicPseudoType, diags
+	}
+	if !result.Type().Equals(typeType) {
+		diags = append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  "Invalid type expression",
+			Detail:   fmt.Sprintf("A type is required, not %s.", result.Type().FriendlyName()),
+		})
+		return cty.DynamicPseudoType, diags
+	}
+
+	return unwrapTypeType(result), diags
+}
+
+func wrapTypeType(ty cty.Type) cty.Value {
+	return cty.CapsuleVal(typeType, &ty)
+}
+
+func unwrapTypeType(val cty.Value) cty.Type {
+	return *(val.EncapsulatedValue().(*cty.Type))
+}
+
+var specSchemaUnlabelled *hcl.BodySchema
+var specSchemaLabelled *hcl.BodySchema
+
+var specSchemaLabelledLabels = []string{"key"}
+
+var typeType = cty.Capsule("type", reflect.TypeOf(cty.NilType))
+
+var typeEvalCtx = &hcl.EvalContext{
+	Variables: map[string]cty.Value{
+		"string": wrapTypeType(cty.String),
+		"bool":   wrapTypeType(cty.Bool),
+		"number": wrapTypeType(cty.Number),
+		"any":    wrapTypeType(cty.DynamicPseudoType),
+	},
+	Functions: map[string]function.Function{
+		"list": function.New(&function.Spec{
+			Params: []function.Parameter{
+				{
+					Name: "element_type",
+					Type: typeType,
+				},
+			},
+			Type: function.StaticReturnType(typeType),
+			Impl: func(args []cty.Value, retType cty.Type) (cty.Value, error) {
+				ety := unwrapTypeType(args[0])
+				ty := cty.List(ety)
+				return wrapTypeType(ty), nil
+			},
+		}),
+		"set": function.New(&function.Spec{
+			Params: []function.Parameter{
+				{
+					Name: "element_type",
+					Type: typeType,
+				},
+			},
+			Type: function.StaticReturnType(typeType),
+			Impl: func(args []cty.Value, retType cty.Type) (cty.Value, error) {
+				ety := unwrapTypeType(args[0])
+				ty := cty.Set(ety)
+				return wrapTypeType(ty), nil
+			},
+		}),
+		"map": function.New(&function.Spec{
+			Params: []function.Parameter{
+				{
+					Name: "element_type",
+					Type: typeType,
+				},
+			},
+			Type: function.StaticReturnType(typeType),
+			Impl: func(args []cty.Value, retType cty.Type) (cty.Value, error) {
+				ety := unwrapTypeType(args[0])
+				ty := cty.Map(ety)
+				return wrapTypeType(ty), nil
+			},
+		}),
+		"tuple": function.New(&function.Spec{
+			Params: []function.Parameter{
+				{
+					Name: "element_types",
+					Type: cty.List(typeType),
+				},
+			},
+			Type: function.StaticReturnType(typeType),
+			Impl: func(args []cty.Value, retType cty.Type) (cty.Value, error) {
+				etysVal := args[0]
+				etys := make([]cty.Type, 0, etysVal.LengthInt())
+				for it := etysVal.ElementIterator(); it.Next(); {
+					_, wrapEty := it.Element()
+					etys = append(etys, unwrapTypeType(wrapEty))
+				}
+				ty := cty.Tuple(etys)
+				return wrapTypeType(ty), nil
+			},
+		}),
+		"object": function.New(&function.Spec{
+			Params: []function.Parameter{
+				{
+					Name: "attribute_types",
+					Type: cty.Map(typeType),
+				},
+			},
+			Type: function.StaticReturnType(typeType),
+			Impl: func(args []cty.Value, retType cty.Type) (cty.Value, error) {
+				atysVal := args[0]
+				atys := make(map[string]cty.Type)
+				for it := atysVal.ElementIterator(); it.Next(); {
+					nameVal, wrapAty := it.Element()
+					name := nameVal.AsString()
+					atys[name] = unwrapTypeType(wrapAty)
+				}
+				ty := cty.Object(atys)
+				return wrapTypeType(ty), nil
+			},
+		}),
+	},
+}
+
+func parseVarsArg(src string, argIdx int) (map[string]cty.Value, hcl.Diagnostics) {
+	fakeFn := fmt.Sprintf("<vars argument %d>", argIdx)
+	f, diags := parser.ParseJSON([]byte(src), fakeFn)
+	if f == nil {
+		return nil, diags
+	}
+	vals, valsDiags := parseVarsBody(f.Body)
+	diags = append(diags, valsDiags...)
+	return vals, diags
+}
+
+func parseVarsFile(filename string) (map[string]cty.Value, hcl.Diagnostics) {
+	var f *hcl.File
+	var diags hcl.Diagnostics
+
+	if strings.HasSuffix(filename, ".json") {
+		f, diags = parser.ParseJSONFile(filename)
+	} else {
+		f, diags = parser.ParseHCLFile(filename)
+	}
+
+	if f == nil {
+		return nil, diags
+	}
+
+	vals, valsDiags := parseVarsBody(f.Body)
+	diags = append(diags, valsDiags...)
+	return vals, diags
+
+}
+
+func parseVarsBody(body hcl.Body) (map[string]cty.Value, hcl.Diagnostics) {
+	attrs, diags := body.JustAttributes()
+	if attrs == nil {
+		return nil, diags
+	}
+
+	vals := make(map[string]cty.Value, len(attrs))
+	for name, attr := range attrs {
+		val, valDiags := attr.Expr.Value(nil)
+		diags = append(diags, valDiags...)
+		vals[name] = val
+	}
+	return vals, diags
 }

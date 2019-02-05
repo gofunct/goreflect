@@ -2,7 +2,6 @@ package goreflect
 
 import (
 	"fmt"
-	"github.com/gofunct/goreflect/strings"
 	"github.com/imdario/mergo"
 	"github.com/pkg/errors"
 	"html/template"
@@ -10,7 +9,7 @@ import (
 	"reflect"
 	"sort"
 	"strconv"
-	pkstrings "strings"
+	"strings"
 	"time"
 )
 
@@ -1389,7 +1388,7 @@ func ToStringSliceE(i interface{}) ([]string, error) {
 	case []string:
 		return v, nil
 	case string:
-		return pkstrings.Fields(v), nil
+		return strings.Fields(v), nil
 	case interface{}:
 		str, err := ToStringE(v)
 		if err != nil {
@@ -1695,12 +1694,12 @@ func SortAlpha(list interface{}) []string {
 	k := reflect.Indirect(reflect.ValueOf(list)).Kind()
 	switch k {
 	case reflect.Slice, reflect.Array:
-		a := strings.StrSlice(list)
+		a := StrSlice(list)
 		s := sort.StringSlice(a)
 		s.Sort()
 		return s
 	}
-	return []string{strings.StrVal(list)}
+	return []string{StrVal(list)}
 }
 
 func Reverse(v interface{}) []interface{} {
@@ -1861,7 +1860,7 @@ func CopyAndInsensitiviseMap(m map[string]interface{}) map[string]interface{} {
 	nm := make(map[string]interface{})
 
 	for key, val := range m {
-		lkey := pkstrings.ToLower(key)
+		lkey := strings.ToLower(key)
 		switch v := val.(type) {
 		case map[interface{}]interface{}:
 			nm[lkey] = CopyAndInsensitiviseMap(ToStringMap(v))
@@ -1887,7 +1886,7 @@ func InsensitivizeMap(m map[string]interface{}) {
 			InsensitivizeMap(val.(map[string]interface{}))
 		}
 
-		lower := pkstrings.ToLower(key)
+		lower := strings.ToLower(key)
 		if key != lower {
 			// remove old key (not lower-cased)
 			delete(m, key)
@@ -1993,7 +1992,7 @@ func ToDictionary(v ...interface{}) map[string]interface{} {
 	dict := map[string]interface{}{}
 	lenv := len(v)
 	for i := 0; i < lenv; i += 2 {
-		key := strings.StrVal(v[i])
+		key := StrVal(v[i])
 		if i+1 >= lenv {
 			dict[key] = ""
 			continue

@@ -1,4 +1,4 @@
-package tags
+package goreflect
 
 import (
 	"errors"
@@ -37,19 +37,19 @@ func scanMultiTag(field string) (map[string][]string, error) {
 		}
 
 		if i >= len(field) {
-			return nil, errors.New(fmt.Sprintf("expected `:' after key name, but got end of tag (in `%field`)", x.value))
+			return nil, errors.New(fmt.Sprintf("expected `:' after key name, but got end of tag (in `%s field`)", field))
 		}
 
 		if field[i] != ':' {
-			return nil, errors.New(fmt.Sprintf("expected `:' after key name, but got `%field' (in `%field`)", field[i], x.value))
+			return nil, errors.New(fmt.Sprintf("expected `:' after key name, but got `%v field' (in `%s field`)", field[i], field))
 		}
 
 		if i+1 >= len(field) {
-			return nil, errors.New(fmt.Sprintf("expected `\"' to start tag value at end of tag (in `%field`)", x.value))
+			return nil, errors.New(fmt.Sprintf("expected `\"' to start tag value at end of tag (in `%s field`)", field))
 		}
 
 		if field[i+1] != '"' {
-			return nil, errors.New(fmt.Sprintf("expected `\"' to start tag value, but got `%field' (in `%field`)", field[i+1], x.value))
+			return nil, errors.New(fmt.Sprintf("expected `\"' to start tag value, but got `%v field' (in `%s field`)", field[i+1], field))
 		}
 
 		name := field[:i]
@@ -60,7 +60,7 @@ func scanMultiTag(field string) (map[string][]string, error) {
 
 		for i < len(field) && field[i] != '"' {
 			if field[i] == '\n' {
-				return nil, errors.New(fmt.Sprintf("expected end of tag value `\"' at end of tag (in `%field`)", x.value))
+				return nil, errors.New(fmt.Sprintf("expected end of tag value `\"' at end of tag (in `%s field`)", field))
 			}
 
 			if field[i] == '\\' {
@@ -70,13 +70,13 @@ func scanMultiTag(field string) (map[string][]string, error) {
 		}
 
 		if i >= len(field) {
-			return nil, errors.New(fmt.Sprintf("expected end of tag value `\"' at end of tag (in `%field`)", x.value))
+			return nil, errors.New(fmt.Sprintf("expected end of tag value `\"' at end of tag (in `%s field`)", field))
 		}
 
 		val, err := strconv.Unquote(field[:i+1])
 
 		if err != nil {
-			return nil, errors.New(fmt.Sprintf("Malformed value of tag `%field:%field` => %field (in `%field`)", name, field[:i+1], err, x.value))
+			return nil, errors.New(fmt.Sprintf("Malformed value of tag `%s field:%s field` => %s field (in `%s field`)", name, field[:i+1], err, field))
 		}
 
 		field = field[i+1:]
