@@ -1467,7 +1467,7 @@ func Implements(this interface{}, that interface{}) bool {
 	}
 }
 
-func ValueTypeIs(target string, src interface{}) bool {
+func ValueTypeMatches(target string, src interface{}) bool {
 	return target == ValueTypeOf(src)
 }
 
