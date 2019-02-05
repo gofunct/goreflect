@@ -2051,3 +2051,12 @@ func DictBoolMatches(dict1 map[string]bool, dict2 map[string]bool) bool {
 	}
 	return false
 }
+
+func StringSliceMatches(s1 []string, s2 []string) bool {
+	// m1 and m2 are the maps we want to compare
+	eq := reflect.DeepEqual(s1, s2)
+	if eq {
+		return true
+	}
+	return false
+}
