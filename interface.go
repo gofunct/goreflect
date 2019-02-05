@@ -1467,25 +1467,11 @@ func Implements(this interface{}, that interface{}) bool {
 	}
 }
 
-// typeIs returns true if the src is the type named in target.
-func TypeIs(target string, src interface{}) bool {
-	return target == TypeOf(src)
+func ValueTypeIs(target string, src interface{}) bool {
+	return target == ValueTypeOf(src)
 }
 
-func TypeIsLike(target string, src interface{}) bool {
-	t := TypeOf(src)
-	return target == t || "*"+target == t
-}
-
-func TypeOf(src interface{}) string {
-	return fmt.Sprintf("%T", src)
-}
-
-func ValueKindIs(target string, src interface{}) bool {
-	return target == ValueKindOf(src)
-}
-
-func ValueKindOf(src interface{}) string {
+func ValueTypeOf(src interface{}) string {
 	return reflect.ValueOf(src).Kind().String()
 }
 
